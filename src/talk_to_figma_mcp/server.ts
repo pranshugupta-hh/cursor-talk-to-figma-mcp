@@ -2196,7 +2196,9 @@ type FigmaCommand =
   | "set_padding"
   | "set_axis_align"
   | "set_layout_sizing"
-  | "set_item_spacing";
+  | "set_item_spacing"
+  | "validate_qa_rules"
+  | "test_qa_validation";
 
 // Update the connectToFigma function
 function connectToFigma(port: number = 3055) {
@@ -2440,6 +2442,145 @@ server.tool(
             type: "text",
             text: `Error joining channel: ${error instanceof Error ? error.message : String(error)
               }`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// QA Validation Tool
+server.tool(
+  "validate_qa_rules",
+  "Validate quality assurance rules across all frames in the Figma document and generate a report",
+  {
+    ignoreStatusBar: z.boolean().optional().describe("Whether to ignore the top status bar in validation"),
+    outputFilePath: z.string().optional().describe("File path to save the QA report"),
+    frameIds: z.array(z.string()).optional().describe("Specific frame IDs to validate, if empty all frames will be validated"),
+  },
+  async ({ ignoreStatusBar = true, outputFilePath = "qa_report.txt", frameIds = [] }) => {
+    try {
+      const result = await sendCommandToFigma("validate_qa_rules", { 
+        ignoreStatusBar, 
+        outputFilePath,
+        frameIds
+      });
+      
+      // Use type assertion for validation result
+      const typedResult = result as { report?: string };
+      
+      // Save the report to a file if we have a report
+      if (typedResult.report) {
+        await saveQAReport(typedResult.report, outputFilePath);
+        // Cast to any to allow property assignment
+        (result as any).fileSaved = true;
+        (result as any).filePath = outputFilePath;
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error validating QA rules: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Helper function to save the QA report to a file
+async function saveQAReport(report: string, filePath: string): Promise<string> {
+  try {
+    // Write the report to a file
+    await Bun.write(filePath, report);
+    return `QA report successfully saved to ${filePath}`;
+  } catch (error) {
+    logger.error(`Error saving QA report: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Failed to save QA report: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// QA Validation Test Tool
+server.tool(
+  "test_qa_validation",
+  "Run QA validation on the current Figma selection and generate a report",
+  {},
+  async () => {
+    try {
+      // First get the current selection
+      const selection = await sendCommandToFigma("get_selection");
+      
+      // Add type assertion for selection
+      const typedSelection = selection as { nodes?: Array<{ id: string, type: string }> };
+      
+      if (!typedSelection || !typedSelection.nodes || typedSelection.nodes.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No frames selected. Please select at least one frame to validate."
+            }
+          ]
+        };
+      }
+      
+      // Get IDs of selected frames
+      const frameIds = typedSelection.nodes
+        .filter(node => node.type === "FRAME")
+        .map(node => node.id);
+      
+      if (frameIds.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No frames found in selection. Please select at least one frame to validate."
+            }
+          ]
+        };
+      }
+      
+      // Run validation with default settings
+      const result = await sendCommandToFigma("validate_qa_rules", { 
+        ignoreStatusBar: true, 
+        outputFilePath: "qa_test_report.txt",
+        frameIds
+      });
+      
+      // Add type assertion for result
+      const typedResult = result as { report?: string };
+      
+      // Save the report to a file
+      if (typedResult.report) {
+        await saveQAReport(typedResult.report, "qa_test_report.txt");
+        (result as any).fileSaved = true;
+        (result as any).filePath = "qa_test_report.txt";
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: `QA validation completed on ${frameIds.length} selected frames. Report saved to qa_test_report.txt`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error testing QA validation: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
