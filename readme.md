@@ -214,3 +214,38 @@ When working with the Figma MCP:
 ## License
 
 MIT
+
+## Quality Assurance Validation
+
+The MCP integration includes an automated QA validation tool that helps ensure design consistency and adherence to design system rules. The validation tool checks each frame in your Figma document against a set of predefined QA rules and generates a detailed report.
+
+### QA Rules Validated
+
+- **Consistent page margins**: Checks that elements maintain proper margins (16px on mobile, 24px on tablet)
+- **Typographic hierarchy**: Ensures there are fewer than 5 typographic styles per screen
+- **Image positioning**: Verifies images extend to screen edges correctly
+- **Bottom OS bar**: Checks that the bottom OS bar has proper background treatment
+- **Vertical spacing**: Validates consistent spacing between cards, sections, and elements
+- **Color contrast**: Ensures text meets WCAG 2.1 AA contrast requirements (4.5:1 ratio)
+- **UI language**: Verifies titles use sentence case rather than title case
+- **Button usage**: Prevents overuse of buttons (no more than 2 per screen)
+- **Corner radius**: Confirms all cards and images use consistent 6px corner radius
+- **Card styling**: Ensures cards have proper drop shadows to indicate interactivity
+- **Typeface**: Validates proper font family usage (Brown not Brandon)
+
+### Running QA Validation
+
+You can run QA validation through Cursor with:
+
+```
+// Validate all frames in the document
+validate_qa_rules
+
+// Validate specific frames
+validate_qa_rules { "frameIds": ["123:456", "123:789"] }
+
+// Customize output file
+validate_qa_rules { "outputFilePath": "custom_report.txt" }
+```
+
+The validation will generate a detailed report file with pass/fail status for each rule, along with specific issues found.
