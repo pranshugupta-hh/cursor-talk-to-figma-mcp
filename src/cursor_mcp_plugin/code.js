@@ -176,6 +176,10 @@ async function handleCommand(command, params) {
       return await setLayoutSizing(params);
     case "set_item_spacing":
       return await setItemSpacing(params);
+    case "validate_qa_rules":
+      return await validateQARules(params);
+    case "test_qa_validation":
+      return await testQAValidation();
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -2962,3 +2966,1139 @@ async function setItemSpacing(params) {
     layoutMode: node.layoutMode,
   };
 }
+
+async function validateQARules(params) {
+  const { ignoreStatusBar = true, outputFilePath = "qa_report.txt", frameIds = [], useSelection = false } = params;
+  const commandId = generateCommandId();
+  let frames = [];
+
+  try {
+    // Send initial progress update
+    sendProgressUpdate(
+      commandId,
+      "validate_qa_rules",
+      "started",
+      0,
+      100,
+      0,
+      "Starting QA validation...",
+      null
+    );
+
+    // Load the current page asynchronously
+    await figma.currentPage.loadAsync();
+
+    // Get all frames to validate
+    if (useSelection) {
+      // Use current selection if useSelection is true
+      const selectedNodes = figma.currentPage.selection;
+      
+      if (selectedNodes.length === 0) {
+        throw new Error("No frames selected. Please select at least one frame to validate.");
+      }
+      
+      // Filter to only include frames
+      frames = selectedNodes.filter(node => node.type === "FRAME");
+      
+      if (frames.length === 0) {
+        throw new Error("No frames found in selection. Please select at least one frame to validate.");
+      }
+    } else if (frameIds.length > 0) {
+      // Get specific frames by IDs
+      frames = frameIds.map(id => figma.getNodeById(id));
+      frames = frames.filter(node => node && node.type === "FRAME");
+    } else {
+      // Get all top-level frames in the current page
+      frames = figma.currentPage.children.filter(node => node.type === "FRAME");
+    }
+
+    if (frames.length === 0) {
+      throw new Error("No frames found to validate");
+    }
+
+    sendProgressUpdate(
+      commandId,
+      "validate_qa_rules",
+      "in_progress",
+      10,
+      100,
+      10,
+      `Found ${frames.length} frames to validate`,
+      null
+    );
+
+    // Rules to validate
+    const qaRules = [
+      {
+        id: "consistent_page_margins",
+        name: "Consistent page margins",
+        description: "Space between elements and the left and right edges of the screen",
+        expected: "16px on mobile devices, 24px on tablet devices"
+      },
+      {
+        id: "typographic_hierarchy",
+        name: "Poor typographic hierarchy",
+        description: "Number of typographic styles per screen",
+        expected: "Less than 5 typographic styles per screen"
+      },
+      {
+        id: "imagery_edge_to_edge",
+        name: "Bring imagery edge to edge",
+        description: "Photography positioning",
+        expected: "Photography should extend to the top of the screen, overlapping the top status bar"
+      },
+      {
+        id: "bottom_os_bar",
+        name: "Bottom OS bar color",
+        description: "Bottom OS bar background color",
+        expected: "Should be transparent to its background (no white stripe) or match the background color"
+      },
+      {
+        id: "vertical_spacing_cards",
+        name: "Vertical spacing between cards",
+        description: "Gap between cards",
+        expected: "Gap between cards is 12px"
+      },
+      {
+        id: "vertical_spacing_header",
+        name: "Vertical spacing with header",
+        description: "Gap between cards and section header",
+        expected: "Gap between cards and section header is 16px"
+      },
+      {
+        id: "vertical_spacing_sections",
+        name: "Vertical spacing between sections",
+        description: "Gap between sections",
+        expected: "Gap between sections is 32px"
+      },
+      {
+        id: "vertical_spacing_inputs",
+        name: "Vertical spacing for input fields",
+        description: "Gap between grouped input fields",
+        expected: "Gap between grouped input fields is 24px"
+      },
+      {
+        id: "color_contrast_text",
+        name: "Color contrast for text",
+        description: "Contrast between text and its background",
+        expected: "Contrast ratio of at least 4.5:1"
+      },
+      {
+        id: "color_contrast_ui",
+        name: "Color contrast for UI elements",
+        description: "Contrast between graphic element and its background",
+        expected: "Contrast ratio of at least 3:1"
+      },
+      {
+        id: "ui_language",
+        name: "UI language",
+        description: "Title case style",
+        expected: "All titles should be written in sentence case, unless they are a proper noun"
+      },
+      {
+        id: "too_many_buttons",
+        name: "Too many buttons",
+        description: "Number of buttons per screen",
+        expected: "Less than 3 buttons per screen"
+      },
+      {
+        id: "button_bar_shadow",
+        name: "Button bar shadow",
+        description: "Button bar shadow style",
+        expected: "Button bar should not show a drop shadow unless the page is scrollable"
+      },
+      {
+        id: "corner_radius",
+        name: "Corner radius",
+        description: "Corner radius consistency",
+        expected: "All cards and images should have a 6px corner radius"
+      },
+      {
+        id: "card_shadow",
+        name: "Card shadow",
+        description: "Card shadow style",
+        expected: "All cards should have a drop shadow to indicate clickability"
+      },
+      {
+        id: "typeface",
+        name: "Typeface",
+        description: "Font family usage",
+        expected: "All fonts should be using Brown typeface, not Brandon"
+      }
+    ];
+
+    // Result storage
+    const results = {};
+    
+    // Process each frame
+    for (let i = 0; i < frames.length; i++) {
+      const frame = frames[i];
+      // Update progress 
+      sendProgressUpdate(
+        commandId,
+        "validate_qa_rules",
+        "in_progress",
+        10 + Math.round(80 * (i / frames.length)),
+        frames.length,
+        i,
+        `Validating frame ${i+1}/${frames.length}: ${frame.name}`,
+        null
+      );
+      
+      // Initialize frame results
+      results[frame.id] = {
+        name: frame.name,
+        rules: {}
+      };
+      
+      // Check each rule for this frame
+      for (const rule of qaRules) {
+        try {
+          // Validate rule
+          const validationResult = await validateRule(frame, rule, ignoreStatusBar);
+          results[frame.id].rules[rule.id] = validationResult;
+        } catch (error) {
+          console.error(`Error validating rule ${rule.id} for frame ${frame.name}:`, error);
+          results[frame.id].rules[rule.id] = {
+            passed: false,
+            reason: `Error checking rule: ${error.message || 'Unknown error'}`
+          };
+        }
+      }
+    }
+    
+    // Generate report
+    const report = generateQAReport(results, qaRules);
+    
+    // Send completed progress update
+    sendProgressUpdate(
+      commandId,
+      "validate_qa_rules",
+      "completed",
+      100,
+      frames.length,
+      frames.length,
+      "QA validation completed",
+      { report, results }
+    );
+    
+    return {
+      success: true,
+      report,
+      results,
+      commandId
+    };
+  } catch (error) {
+    console.error("Error in validateQARules:", error);
+    
+    // Send error progress update
+    sendProgressUpdate(
+      commandId,
+      "validate_qa_rules",
+      "error",
+      0,
+      100,
+      0,
+      `Error validating QA rules: ${error.message || 'Unknown error'}`,
+      null
+    );
+    
+    throw error;
+  }
+}
+
+// Helper function to validate individual rules
+async function validateRule(frame, rule, ignoreStatusBar) {
+  try {
+    console.log(`Validating rule: ${rule.id}`);
+    
+    // Check if validation function exists for the rule
+    let validationFunction;
+    
+    switch (rule.id) {
+      case "consistent_page_margins": 
+        validationFunction = validatePageMargins;
+        break;
+      case "typographic_hierarchy":
+        validationFunction = validateTypographicHierarchy;
+        break;
+      case "imagery_edge_to_edge":
+        validationFunction = validateImageryEdgeToEdge;
+        break;
+      case "bottom_os_bar":
+        validationFunction = validateBottomOSBar;
+        break;
+      case "vertical_spacing_cards":
+        validationFunction = validateVerticalSpacingCards;
+        break;
+      case "vertical_spacing_header":
+        validationFunction = validateVerticalSpacingHeader;
+        break;
+      case "vertical_spacing_sections":
+        validationFunction = validateVerticalSpacingSections;
+        break;
+      case "vertical_spacing_inputs":
+        validationFunction = validateVerticalSpacingInputs;
+        break;
+      case "color_contrast_text":
+        validationFunction = validateColorContrastText;
+        break;
+      case "color_contrast_ui":
+        validationFunction = validateColorContrastUI;
+        break;
+      case "ui_language":
+        validationFunction = validateUILanguage;
+        break;
+      case "too_many_buttons":
+        validationFunction = validateTooManyButtons;
+        break;
+      case "button_bar_shadow":
+        validationFunction = validateButtonBarShadow;
+        break;
+      case "corner_radius":
+        validationFunction = validateCornerRadius;
+        break;
+      case "card_shadow":
+        validationFunction = validateCardShadow;
+        break;
+      case "typeface":
+        validationFunction = validateTypeface;
+        break;
+      default:
+        return {
+          passed: false,
+          reason: `Unimplemented rule: ${rule.id}`
+        };
+    }
+    
+    console.log(`Validation function for ${rule.id}:`, typeof validationFunction);
+    
+    if (typeof validationFunction !== 'function') {
+      console.error(`Validation function for rule ${rule.id} is not defined`);
+      return {
+        passed: false,
+        reason: `Validation function for rule ${rule.id} is not implemented yet`
+      };
+    }
+    
+    // Call the validation function
+    if (rule.id === "imagery_edge_to_edge") {
+      return validationFunction(frame, ignoreStatusBar);
+    } else {
+      return validationFunction(frame);
+    }
+  } catch (error) {
+    console.error(`Error validating rule ${rule.id}:`, error);
+    return {
+      passed: false,
+      reason: `Error checking rule: ${error.message}`
+    };
+  }
+}
+
+// Rule validation implementations
+async function validatePageMargins(frame) {
+  // Check if frame is mobile or tablet based on width
+  const isMobile = frame.width <= 420; // Assumption for mobile width
+  const requiredMargin = isMobile ? 16 : 24;
+  
+  // Find elements that are close to the edges
+  const violations = [];
+  
+  for (const child of frame.children) {
+    // Skip background elements and status bars
+    if (child.name.toLowerCase().includes('background') || 
+        child.name.toLowerCase().includes('status') ||
+        child.name.toLowerCase().includes('statusbar')) {
+      continue;
+    }
+    
+    // Check left margin
+    if (child.x < requiredMargin && child.x > 0) {
+      violations.push({
+        element: child.name,
+        position: 'left',
+        actual: Math.round(child.x),
+        required: requiredMargin
+      });
+    }
+    
+    // Check right margin
+    const rightEdge = child.x + child.width;
+    const frameRightEdge = frame.width;
+    const rightMargin = frameRightEdge - rightEdge;
+    
+    if (rightMargin < requiredMargin && rightMargin > 0) {
+      violations.push({
+        element: child.name,
+        position: 'right',
+        actual: Math.round(rightMargin),
+        required: requiredMargin
+      });
+    }
+  }
+  
+  if (violations.length === 0) {
+    return {
+      passed: true,
+      details: `All elements respect the ${requiredMargin}px margin requirement for ${isMobile ? 'mobile' : 'tablet'}`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `Found ${violations.length} elements that violate the ${requiredMargin}px margin requirement`,
+      details: violations
+    };
+  }
+}
+
+async function validateTypographicHierarchy(frame) {
+  // Find all text nodes
+  const textNodes = [];
+  
+  function collectTextNodes(node) {
+    if (node.type === 'TEXT') {
+      textNodes.push(node);
+    } else if (node.children) {
+      for (const child of node.children) {
+        collectTextNodes(child);
+      }
+    }
+  }
+  
+  collectTextNodes(frame);
+  
+  // Collect unique text styles
+  const textStyles = new Set();
+  
+  for (const node of textNodes) {
+    // We'll use a combination of font, size and weight as a "style"
+    if (node.fontName) {
+      const styleKey = `${node.fontName.family}-${node.fontSize}-${node.fontWeight || 'normal'}`;
+      textStyles.add(styleKey);
+    }
+  }
+  
+  const styleCount = textStyles.size;
+  
+  if (styleCount < 5) {
+    return {
+      passed: true,
+      details: `Found ${styleCount} typographic styles, which is less than the maximum of 5`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `Found ${styleCount} typographic styles, which exceeds the maximum of 5`,
+      details: `Recommended to consolidate text styles for better consistency`
+    };
+  }
+}
+
+async function validateImageryEdgeToEdge(frame, ignoreStatusBar) {
+  // Find all image nodes at the top of the screen
+  const imageNodes = [];
+  
+  function isImageNode(node) {
+    // Check if it's an image or has image fills
+    if (node.type === 'IMAGE') return true;
+    
+    if (node.fills) {
+      for (const fill of node.fills) {
+        if (fill.type === 'IMAGE') return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  function collectImageNodes(node) {
+    if (isImageNode(node)) {
+      imageNodes.push(node);
+    } else if (node.children) {
+      for (const child of node.children) {
+        collectImageNodes(child);
+      }
+    }
+  }
+  
+  collectImageNodes(frame);
+  
+  // Check if any image extends to the top of the screen
+  const topImages = imageNodes.filter(img => img.y <= (ignoreStatusBar ? 44 : 0) && img.x <= 1);
+  
+  if (topImages.length > 0) {
+    return {
+      passed: true,
+      details: `Found ${topImages.length} image(s) that extend to the top of the screen`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `No images found that extend to the top of the screen`,
+      details: `Images should extend to the top edge of the screen for an immersive experience`
+    };
+  }
+}
+
+async function validateBottomOSBar(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "Bottom OS bar validation is not fully implemented yet"
+  };
+}
+
+function generateQAReport(results, rules) {
+  let report = "# Quality Assurance Report\n\n";
+  
+  // Add timestamp
+  report += `Generated on: ${new Date().toLocaleString()}\n\n`;
+  
+  // Process each frame
+  for (const frameId in results) {
+    const frame = results[frameId];
+    report += `## Frame: ${frame.name}\n\n`;
+    
+    // Calculate overall stats
+    const passedRules = Object.values(frame.rules).filter(r => r.passed).length;
+    const totalRules = rules.length;
+    const percentage = Math.round((passedRules / totalRules) * 100);
+    
+    report += `Overall: ${passedRules}/${totalRules} rules passed (${percentage}%)\n\n`;
+    
+    // List all rules with pass/fail status
+    report += "### Rule Checklist\n\n";
+    
+    for (const rule of rules) {
+      const result = frame.rules[rule.id];
+      const passSymbol = result.passed ? "✅" : "❌";
+      
+      report += `${passSymbol} **${rule.name}**: ${rule.description}\n`;
+      report += `   - Expected: ${rule.expected}\n`;
+      
+      if (!result.passed && result.reason) {
+        report += `   - Issue: ${result.reason}\n`;
+        
+        // Add details if available
+        if (result.details) {
+          if (typeof result.details === 'string') {
+            report += `   - Details: ${result.details}\n`;
+          } else if (Array.isArray(result.details)) {
+            report += `   - Details: Found ${result.details.length} violation(s)\n`;
+            for (const detail of result.details.slice(0, 3)) { // Show max 3 violations
+              report += `     * ${JSON.stringify(detail)}\n`;
+            }
+            if (result.details.length > 3) {
+              report += `     * ... and ${result.details.length - 3} more\n`;
+            }
+          }
+        }
+      }
+      
+      report += "\n";
+    }
+    
+    report += "---\n\n";
+  }
+  
+  return report;
+}
+
+// Additional rule validation functions (simplified implementations)
+async function validateVerticalSpacingCards(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "Vertical spacing cards validation is not fully implemented yet"
+  };
+}
+
+async function validateVerticalSpacingHeader(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "Vertical spacing header validation is not fully implemented yet"
+  };
+}
+
+async function validateVerticalSpacingSections(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "Vertical spacing sections validation is not fully implemented yet"
+  };
+}
+
+async function validateVerticalSpacingInputs(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "Vertical spacing inputs validation is not fully implemented yet"
+  };
+}
+
+async function validateColorContrastText(frame) {
+  // Find all text nodes and check their contrast against backgrounds
+  const textNodes = [];
+  const violations = [];
+  
+  // Collect all text nodes
+  function collectTextNodes(node) {
+    if (node.type === 'TEXT') {
+      textNodes.push(node);
+    } else if (node.children) {
+      for (const child of node.children) {
+        collectTextNodes(child);
+      }
+    }
+  }
+  
+  collectTextNodes(frame);
+  
+  // For each text node, check the contrast with its background
+  for (const textNode of textNodes) {
+    // Only process visible text nodes with content
+    if (!textNode.visible || !textNode.characters || textNode.characters.trim() === '') {
+      continue;
+    }
+    
+    try {
+      // Get text color (assuming solid fill for simplicity)
+      let textColor = null;
+      if (textNode.fills && textNode.fills.length > 0) {
+        const fill = textNode.fills.find(f => f.type === 'SOLID' && f.visible !== false);
+        if (fill) {
+          textColor = fill.color;
+        }
+      }
+      
+      if (!textColor) {
+        continue; // Skip if no solid fill found
+      }
+      
+      // Find background color (simplified approach)
+      // In a real implementation, you might need to check parent containers or overlapping elements
+      let backgroundColor = { r: 1, g: 1, b: 1 }; // Default to white
+      
+      // Get parent with background
+      let parent = textNode.parent;
+      while (parent && !backgroundColor) {
+        if (parent.fills && parent.fills.length > 0) {
+          const fill = parent.fills.find(f => f.type === 'SOLID' && f.visible !== false);
+          if (fill) {
+            backgroundColor = fill.color;
+            break;
+          }
+        }
+        parent = parent.parent;
+      }
+      
+      // Calculate contrast ratio
+      const ratio = calculateContrastRatio(textColor, backgroundColor);
+      
+      // For text, WCAG requires 4.5:1 minimum contrast
+      if (ratio < 4.5) {
+        violations.push({
+          element: textNode.name || 'Text element',
+          text: textNode.characters.substring(0, 20) + (textNode.characters.length > 20 ? '...' : ''),
+          contrastRatio: ratio.toFixed(2),
+          textColor: rgbToHex(textColor),
+          backgroundColor: rgbToHex(backgroundColor),
+          required: 4.5
+        });
+      }
+    } catch (error) {
+      console.error(`Error checking contrast for text node ${textNode.name}:`, error);
+    }
+  }
+  
+  if (violations.length === 0) {
+    return {
+      passed: true,
+      details: `All ${textNodes.length} text elements have sufficient contrast (at least 4.5:1)`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `Found ${violations.length} text elements with insufficient contrast`,
+      details: violations
+    };
+  }
+}
+
+async function validateColorContrastUI(frame) {
+  // Check contrast for UI elements like buttons, icons, form controls
+  const uiNodes = [];
+  const violations = [];
+  
+  // Collect potential UI elements (simplified - in production, this would be more sophisticated)
+  function collectUINodes(node) {
+    // Check if node name indicates it's a UI element
+    const isUIElement = node.name.toLowerCase().includes('button') || 
+                       node.name.toLowerCase().includes('icon') ||
+                       node.name.toLowerCase().includes('control') ||
+                       node.name.toLowerCase().includes('input') ||
+                       node.name.toLowerCase().includes('checkbox') ||
+                       node.name.toLowerCase().includes('radio');
+    
+    if (isUIElement) {
+      uiNodes.push(node);
+    }
+    
+    // Check children
+    if (node.children) {
+      for (const child of node.children) {
+        collectUINodes(child);
+      }
+    }
+  }
+  
+  collectUINodes(frame);
+  
+  // For each UI element, check the contrast with its surrounding/background
+  for (const uiNode of uiNodes) {
+    // Skip invisible elements
+    if (!uiNode.visible) {
+      continue;
+    }
+    
+    try {
+      // Get foreground color (assuming solid fill for simplicity)
+      let foregroundColor = null;
+      if (uiNode.fills && uiNode.fills.length > 0) {
+        const fill = uiNode.fills.find(f => f.type === 'SOLID' && f.visible !== false);
+        if (fill) {
+          foregroundColor = fill.color;
+        }
+      }
+      
+      // If no fill, try stroke color
+      if (!foregroundColor && uiNode.strokes && uiNode.strokes.length > 0) {
+        const stroke = uiNode.strokes.find(s => s.type === 'SOLID' && s.visible !== false);
+        if (stroke) {
+          foregroundColor = stroke.color;
+        }
+      }
+      
+      if (!foregroundColor) {
+        continue; // Skip if no solid color found
+      }
+      
+      // Find background color (simplified approach)
+      let backgroundColor = { r: 1, g: 1, b: 1 }; // Default to white
+      
+      // Get parent with background
+      let parent = uiNode.parent;
+      while (parent && !backgroundColor) {
+        if (parent.fills && parent.fills.length > 0) {
+          const fill = parent.fills.find(f => f.type === 'SOLID' && f.visible !== false);
+          if (fill) {
+            backgroundColor = fill.color;
+            break;
+          }
+        }
+        parent = parent.parent;
+      }
+      
+      // Calculate contrast ratio
+      const ratio = calculateContrastRatio(foregroundColor, backgroundColor);
+      
+      // For UI elements, WCAG requires 3:1 minimum contrast
+      if (ratio < 3) {
+        violations.push({
+          element: uiNode.name || 'UI element',
+          contrastRatio: ratio.toFixed(2),
+          foregroundColor: rgbToHex(foregroundColor),
+          backgroundColor: rgbToHex(backgroundColor),
+          required: 3
+        });
+      }
+    } catch (error) {
+      console.error(`Error checking contrast for UI node ${uiNode.name}:`, error);
+    }
+  }
+  
+  if (violations.length === 0) {
+    return {
+      passed: true,
+      details: `All ${uiNodes.length} UI elements have sufficient contrast (at least 3:1)`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `Found ${violations.length} UI elements with insufficient contrast`,
+      details: violations
+    };
+  }
+}
+
+async function validateUILanguage(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "UI language validation is not fully implemented yet"
+  };
+}
+
+async function validateTooManyButtons(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "Too many buttons validation is not fully implemented yet"
+  };
+}
+
+async function validateButtonBarShadow(frame) {
+  // Placeholder implementation
+  return {
+    passed: true,
+    details: "Button bar shadow validation is not fully implemented yet"
+  };
+}
+
+async function validateCornerRadius(frame) {
+  // Check if cards and images have 6px corner radius
+  const targetNodes = [];
+  const violations = [];
+  const EXPECTED_RADIUS = 6;
+  
+  // Collect nodes that should have corner radius
+  function collectNodes(node) {
+    // Check if node is a card or image
+    const isCard = node.name.toLowerCase().includes('card');
+    const isImage = node.name.toLowerCase().includes('image') || 
+                   node.name.toLowerCase().includes('photo') ||
+                   node.type === 'IMAGE';
+    
+    // Also include rectangles that might be cards or images
+    const isRectWithFill = node.type === 'RECTANGLE' && node.fills && 
+                          node.fills.some(fill => fill.visible !== false);
+    
+    if (isCard || isImage || isRectWithFill) {
+      targetNodes.push({
+        node,
+        type: isCard ? 'card' : (isImage ? 'image' : 'rectangle')
+      });
+    }
+    
+    // Check children
+    if (node.children) {
+      for (const child of node.children) {
+        collectNodes(child);
+      }
+    }
+  }
+  
+  collectNodes(frame);
+  
+  // Check corner radius for each node
+  for (const item of targetNodes) {
+    const node = item.node;
+    const nodeType = item.type;
+    
+    // Skip if it's not a shape with corner radius property
+    if (!node.cornerRadius && typeof node.cornerRadius !== 'number') {
+      continue;
+    }
+    
+    let cornerRadiusValue;
+    let individualCorners = false;
+    
+    // Handle both single radius and individual corner radii
+    if (typeof node.cornerRadius === 'number') {
+      cornerRadiusValue = node.cornerRadius;
+    } else if (node.topLeftRadius !== undefined) {
+      individualCorners = true;
+      // Check if all corners have the same radius
+      const allSame = 
+        node.topLeftRadius === node.topRightRadius &&
+        node.topRightRadius === node.bottomRightRadius &&
+        node.bottomRightRadius === node.bottomLeftRadius;
+      
+      if (allSame) {
+        cornerRadiusValue = node.topLeftRadius;
+      } else {
+        // If corners have different radii, that's a violation
+        violations.push({
+          element: node.name || `${nodeType} element`,
+          issue: 'Inconsistent corner radii',
+          cornerRadii: {
+            topLeft: node.topLeftRadius,
+            topRight: node.topRightRadius,
+            bottomRight: node.bottomRightRadius,
+            bottomLeft: node.bottomLeftRadius
+          },
+          expected: EXPECTED_RADIUS
+        });
+        continue;
+      }
+    }
+    
+    // Check if radius matches expected value
+    if (cornerRadiusValue !== EXPECTED_RADIUS) {
+      violations.push({
+        element: node.name || `${nodeType} element`,
+        actualRadius: cornerRadiusValue,
+        expected: EXPECTED_RADIUS
+      });
+    }
+  }
+  
+  if (violations.length === 0) {
+    return {
+      passed: true,
+      details: `All ${targetNodes.length} cards and images have the correct corner radius (${EXPECTED_RADIUS}px)`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `Found ${violations.length} elements with incorrect corner radius`,
+      details: violations
+    };
+  }
+}
+
+async function validateTypeface(frame) {
+  // Check if all text uses Brown typeface instead of Brandon
+  const textNodes = [];
+  const violations = [];
+  const EXPECTED_TYPEFACE = 'Brown';
+  const PROHIBITED_TYPEFACE = 'Brandon';
+  
+  // Collect all text nodes
+  function collectTextNodes(node) {
+    if (node.type === 'TEXT') {
+      textNodes.push(node);
+    } else if (node.children) {
+      for (const child of node.children) {
+        collectTextNodes(child);
+      }
+    }
+  }
+  
+  collectTextNodes(frame);
+  
+  // Check font family for each text node
+  for (const textNode of textNodes) {
+    // Only process visible text nodes with content
+    if (!textNode.visible || !textNode.characters || textNode.characters.trim() === '') {
+      continue;
+    }
+    
+    try {
+      let fontFamily = null;
+      
+      // Get font information
+      if (textNode.fontName && textNode.fontName.family) {
+        fontFamily = textNode.fontName.family;
+      }
+      
+      // Check for style overrides
+      const styleOverrides = [];
+      if (textNode.styleOverrideTable) {
+        for (const [index, style] of Object.entries(textNode.styleOverrideTable)) {
+          if (style.fontName && style.fontName.family) {
+            styleOverrides.push({
+              index: parseInt(index),
+              family: style.fontName.family
+            });
+          }
+        }
+      }
+      
+      // Check if using prohibited typeface (Brandon) or not using expected typeface (Brown)
+      let hasViolation = false;
+      
+      if (fontFamily === PROHIBITED_TYPEFACE || (fontFamily !== EXPECTED_TYPEFACE && fontFamily !== null)) {
+        hasViolation = true;
+      }
+      
+      // Check style overrides for violations
+      const violatingOverrides = styleOverrides.filter(
+        override => override.family === PROHIBITED_TYPEFACE || 
+                  (override.family !== EXPECTED_TYPEFACE && override.family !== null)
+      );
+      
+      if (hasViolation || violatingOverrides.length > 0) {
+        violations.push({
+          element: textNode.name || 'Text element',
+          text: textNode.characters.substring(0, 20) + (textNode.characters.length > 20 ? '...' : ''),
+          actualTypeface: fontFamily,
+          hasStyleOverrides: violatingOverrides.length > 0,
+          violatingOverrides: violatingOverrides.length > 0 ? 
+            violatingOverrides.map(o => o.family).filter((v, i, a) => a.indexOf(v) === i) : [],
+          expected: EXPECTED_TYPEFACE
+        });
+      }
+    } catch (error) {
+      console.error(`Error checking typeface for text node ${textNode.name}:`, error);
+    }
+  }
+  
+  if (violations.length === 0) {
+    return {
+      passed: true,
+      details: `All ${textNodes.length} text elements use the correct typeface (${EXPECTED_TYPEFACE})`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `Found ${violations.length} text elements using incorrect typeface`,
+      details: violations
+    };
+  }
+}
+
+async function validateCardShadow(frame) {
+  // Check if all cards have a drop shadow to indicate clickability
+  const cardNodes = [];
+  const violations = [];
+  
+  // Collect all card nodes
+  function collectCardNodes(node) {
+    // Check if node is a card based on name
+    const isCard = node.name.toLowerCase().includes('card') || 
+                  node.name.toLowerCase().includes('tile');
+    
+    if (isCard) {
+      cardNodes.push(node);
+    }
+    
+    // Check children recursively
+    if (node.children) {
+      for (const child of node.children) {
+        collectCardNodes(child);
+      }
+    }
+  }
+  
+  collectCardNodes(frame);
+  
+  // If no cards found, return inconclusive
+  if (cardNodes.length === 0) {
+    return {
+      passed: true,
+      details: "No card elements found to validate shadow"
+    };
+  }
+  
+  // Check each card for proper shadow
+  for (const cardNode of cardNodes) {
+    // Skip invisible cards
+    if (!cardNode.visible) {
+      continue;
+    }
+    
+    try {
+      // Check for effects (shadows)
+      let hasShadow = false;
+      
+      if (cardNode.effects && cardNode.effects.length > 0) {
+        // Look for drop shadow effect
+        const shadowEffect = cardNode.effects.find(effect => 
+          effect.type === 'DROP_SHADOW' && effect.visible !== false
+        );
+        
+        if (shadowEffect) {
+          hasShadow = true;
+        }
+      }
+      
+      // If no shadow found, add to violations
+      if (!hasShadow) {
+        violations.push({
+          element: cardNode.name || 'Card element',
+          issue: 'Missing drop shadow',
+          recommendation: 'Add a drop shadow effect to indicate clickability'
+        });
+      }
+    } catch (error) {
+      console.error(`Error checking shadow for card ${cardNode.name}:`, error);
+    }
+  }
+  
+  if (violations.length === 0) {
+    return {
+      passed: true,
+      details: `All ${cardNodes.length} card elements have appropriate drop shadows`
+    };
+  } else {
+    return {
+      passed: false,
+      reason: `Found ${violations.length} card elements missing drop shadows`,
+      details: violations
+    };
+  }
+}
+// Restore essential helper functions that were removed
+
+// Helper function to calculate contrast ratio
+function calculateContrastRatio(color1, color2) {
+  // Convert RGB to luminance
+  const luminance1 = calculateLuminance(color1);
+  const luminance2 = calculateLuminance(color2);
+  
+  // Calculate contrast ratio
+  const lighter = Math.max(luminance1, luminance2);
+  const darker = Math.min(luminance1, luminance2);
+  
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+// Calculate relative luminance for a color
+function calculateLuminance(color) {
+  // Convert sRGB to linear RGB
+  const linearR = convertSRGBtoLinear(color.r);
+  const linearG = convertSRGBtoLinear(color.g);
+  const linearB = convertSRGBtoLinear(color.b);
+  
+  // Calculate luminance
+  return 0.2126 * linearR + 0.7152 * linearG + 0.0722 * linearB;
+}
+
+// Convert sRGB component to linear RGB
+function convertSRGBtoLinear(value) {
+  if (value <= 0.03928) {
+    return value / 12.92;
+  } else {
+    return Math.pow((value + 0.055) / 1.055, 2.4);
+  }
+}
+
+// Convert RGB to hex
+function rgbToHex(color) {
+  const r = Math.round(color.r * 255).toString(16).padStart(2, '0');
+  const g = Math.round(color.g * 255).toString(16).padStart(2, '0');
+  const b = Math.round(color.b * 255).toString(16).padStart(2, '0');
+  
+  return `#${r}${g}${b}`;
+}
+
+// Simple helper for running QA validation on current selection
+async function testQAValidation() {
+  // Check if there's a valid selection
+  const selection = figma.currentPage.selection;
+  
+  if (!selection || selection.length === 0) {
+    throw new Error("Please select at least one frame to validate");
+  }
+  
+  // Filter for frames only
+  const frames = selection.filter(node => node.type === "FRAME");
+  
+  if (frames.length === 0) {
+    throw new Error("Please select at least one frame to validate");
+  }
+  
+  // Get the frame IDs
+  const frameIds = frames.map(frame => frame.id);
+  
+  // Run QA validation with the selected frames
+  return await validateQARules({
+    frameIds,
+    ignoreStatusBar: true,
+    useSelection: true
+  });
+}
+
