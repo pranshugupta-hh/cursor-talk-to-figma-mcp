@@ -167,6 +167,133 @@
       .operation-error {
         color: #ff9999;
       }
+      /* QA Results Styles */
+      .qa-frame {
+        margin-bottom: 20px;
+        background-color: #2d2d2d;
+        border-radius: 6px;
+        padding: 12px;
+      }
+      .qa-frame-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .qa-frame-title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .qa-stats {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .qa-stat {
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+      .qa-stat-passed {
+        background-color: rgba(74, 222, 128, 0.2);
+        color: #4ade80;
+      }
+      .qa-stat-failed {
+        background-color: rgba(255, 153, 153, 0.2);
+        color: #ff9999;
+      }
+      .qa-rule-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .qa-rule {
+        padding: 8px 12px;
+        margin-bottom: 6px;
+        border-radius: 4px;
+        background-color: #3d3d3d;
+      }
+      .qa-rule.passed {
+        border-left: 3px solid #4ade80;
+      }
+      .qa-rule.failed {
+        border-left: 3px solid #ff9999;
+      }
+      .qa-rule-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+      }
+      .qa-rule-name {
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .qa-rule-details {
+        display: none;
+        padding: 8px 0 0 24px;
+        margin-top: 8px;
+        border-top: 1px solid #4d4d4d;
+        font-size: 13px;
+      }
+      .qa-rule-details.visible {
+        display: block;
+      }
+      .qa-rule-description {
+        margin-bottom: 8px;
+      }
+      .qa-rule-expected {
+        margin-bottom: 8px;
+        font-style: italic;
+        color: #cccccc;
+      }
+      .qa-rule-violations {
+        margin-top: 10px;
+      }
+      .qa-violation {
+        padding: 6px 10px;
+        background-color: #471a1a;
+        border-radius: 4px;
+        margin-bottom: 6px;
+      }
+      .qa-chevron {
+        transition: transform 0.3s;
+      }
+      .qa-chevron.expanded {
+        transform: rotate(90deg);
+      }
+      .qa-toggle-group {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .qa-toggle-button {
+        font-size: 12px;
+        padding: 4px 8px;
+        background-color: #3d3d3d;
+        border: none;
+        border-radius: 4px;
+        color: #e0e0e0;
+        cursor: pointer;
+      }
+      .qa-badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .qa-badge-pass {
+        background-color: rgba(74, 222, 128, 0.3);
+        color: #4ade80;
+      }
+      .qa-badge-fail {
+        background-color: rgba(255, 153, 153, 0.3);
+        color: #ff9999;
+      }
     </style>
   </head>
   <body>
@@ -215,6 +342,18 @@
           </button>
         </div>
         
+        <!-- Add QA Validation Section -->
+        <div class="section">
+          <h2>Quality Assurance Validation</h2>
+          <p>Validate your design against QA rules</p>
+          <button id="btn-validate-qa" class="primary" disabled>
+            Run QA Validation
+          </button>
+          <button id="btn-validate-qa-selection" class="secondary" disabled>
+            Validate Selected Frames
+          </button>
+        </div>
+        
         <!-- Add Progress Bar Section -->
         <div id="progress-container" class="section hidden">
           <h2>Operation Progress</h2>
@@ -226,6 +365,12 @@
             <div id="progress-status">Not started</div>
             <div id="progress-percentage">0%</div>
           </div>
+        </div>
+        
+        <!-- Add Results Section -->
+        <div id="qa-results" class="section">
+          <h2>Results</h2>
+          <div id="qa-results-container">No results yet</div>
         </div>
       </div>
 
@@ -254,6 +399,333 @@
     </div>
 
     <script>
+      // Define rule display names
+      const ruleNames = {
+        consistent_page_margins: "Consistent page margins",
+        typographic_hierarchy: "Typographic hierarchy",
+        imagery_edge_to_edge: "Imagery edge to edge",
+        bottom_os_bar: "Bottom OS bar",
+        vertical_spacing_cards: "Vertical spacing between cards",
+        vertical_spacing_header: "Vertical spacing with header",
+        vertical_spacing_sections: "Vertical spacing between sections",
+        vertical_spacing_inputs: "Vertical spacing for input fields",
+        color_contrast_text: "Color contrast for text",
+        color_contrast_ui: "Color contrast for UI",
+        ui_language: "UI language",
+        too_many_buttons: "Too many buttons",
+        button_bar_shadow: "Button bar shadow",
+        corner_radius: "Corner radius",
+        card_shadow: "Card shadow",
+        typeface: "Typeface"
+      };
+
+      function displayQAResults(results) {
+        const container = document.getElementById('qa-results-container');
+        container.innerHTML = '';
+        
+        // Add toggle controls
+        const toggleGroup = document.createElement('div');
+        toggleGroup.className = 'qa-toggle-group';
+        
+        const showAllButton = document.createElement('button');
+        showAllButton.className = 'qa-toggle-button';
+        showAllButton.textContent = 'Show All Details';
+        showAllButton.onclick = () => toggleAllDetails(true);
+        
+        const hideAllButton = document.createElement('button');
+        hideAllButton.className = 'qa-toggle-button';
+        hideAllButton.textContent = 'Hide All Details';
+        hideAllButton.onclick = () => toggleAllDetails(false);
+        
+        toggleGroup.appendChild(showAllButton);
+        toggleGroup.appendChild(hideAllButton);
+        container.appendChild(toggleGroup);
+        
+        // Process each frame
+        Object.entries(results).forEach(([frameId, frame]) => {
+          const frameEl = document.createElement('div');
+          frameEl.className = 'qa-frame';
+          frameEl.dataset.frameId = frameId;
+          
+          // Frame header with title and stats
+          const frameHeader = document.createElement('div');
+          frameHeader.className = 'qa-frame-header';
+          
+          const frameTitle = document.createElement('h3');
+          frameTitle.className = 'qa-frame-title';
+          frameTitle.textContent = frame.name;
+          frameHeader.appendChild(frameTitle);
+          
+          frameEl.appendChild(frameHeader);
+          
+          // Calculate stats
+          const totalRules = Object.keys(frame.rules).length;
+          const passedRules = Object.values(frame.rules).filter(r => r.passed).length;
+          const failedRules = totalRules - passedRules;
+          const percentage = Math.round((passedRules / totalRules) * 100);
+          
+          // Display stats
+          const statsEl = document.createElement('div');
+          statsEl.className = 'qa-stats';
+          
+          const totalStat = document.createElement('div');
+          totalStat.className = 'qa-stat';
+          totalStat.textContent = `${percentage}% passed`;
+          
+          const passedStat = document.createElement('div');
+          passedStat.className = 'qa-stat qa-stat-passed';
+          passedStat.textContent = `${passedRules} passed`;
+          
+          const failedStat = document.createElement('div');
+          failedStat.className = 'qa-stat qa-stat-failed';
+          failedStat.textContent = `${failedRules} failed`;
+          
+          statsEl.appendChild(totalStat);
+          statsEl.appendChild(passedStat);
+          statsEl.appendChild(failedStat);
+          frameEl.appendChild(statsEl);
+          
+          // Create rule list
+          const ruleList = document.createElement('ul');
+          ruleList.className = 'qa-rule-list';
+          
+          // Process each rule
+          Object.entries(frame.rules).forEach(([ruleId, ruleResult]) => {
+            const ruleName = ruleNames[ruleId] || ruleId;
+            
+            const ruleEl = document.createElement('li');
+            ruleEl.className = `qa-rule ${ruleResult.passed ? 'passed' : 'failed'}`;
+            
+            // Rule header
+            const ruleHeader = document.createElement('div');
+            ruleHeader.className = 'qa-rule-header';
+            
+            const ruleTitleEl = document.createElement('div');
+            ruleTitleEl.className = 'qa-rule-name';
+            
+            // Status icon
+            const statusIcon = document.createElement('span');
+            statusIcon.textContent = ruleResult.passed ? '✅' : '❌';
+            ruleTitleEl.appendChild(statusIcon);
+            
+            // Rule name
+            const ruleNameEl = document.createElement('span');
+            ruleNameEl.textContent = ruleName;
+            ruleTitleEl.appendChild(ruleNameEl);
+            
+            ruleHeader.appendChild(ruleTitleEl);
+            
+            // Expandable icon (only for failed rules)
+            if (!ruleResult.passed) {
+              const chevron = document.createElement('span');
+              chevron.className = 'qa-chevron';
+              chevron.textContent = '▶';
+              chevron.style.fontSize = '12px';
+              ruleHeader.appendChild(chevron);
+              
+              // Make header clickable to toggle details
+              ruleHeader.style.cursor = 'pointer';
+              ruleHeader.onclick = function() {
+                const details = this.nextElementSibling;
+                const isVisible = details.classList.toggle('visible');
+                chevron.classList.toggle('expanded', isVisible);
+                chevron.textContent = isVisible ? '▼' : '▶';
+              };
+            }
+            
+            ruleEl.appendChild(ruleHeader);
+            
+            // Rule details (for failed rules)
+            if (!ruleResult.passed) {
+              const ruleDetails = document.createElement('div');
+              ruleDetails.className = 'qa-rule-details';
+              
+              // Only add details for failed rules
+              if (!ruleResult.passed) {
+                // Description and expectation
+                const ruleMetadata = getQARuleMetadata(ruleId);
+                
+                if (ruleMetadata) {
+                  const descEl = document.createElement('div');
+                  descEl.className = 'qa-rule-description';
+                  descEl.textContent = ruleMetadata.description;
+                  ruleDetails.appendChild(descEl);
+                  
+                  const expectEl = document.createElement('div');
+                  expectEl.className = 'qa-rule-expected';
+                  expectEl.textContent = `Expected: ${ruleMetadata.expected}`;
+                  ruleDetails.appendChild(expectEl);
+                }
+                
+                // Reason for failure
+                if (ruleResult.reason) {
+                  const reasonEl = document.createElement('div');
+                  reasonEl.textContent = `Issue: ${ruleResult.reason}`;
+                  reasonEl.style.marginBottom = '8px';
+                  ruleDetails.appendChild(reasonEl);
+                }
+                
+                // Violations detail
+                if (ruleResult.details && typeof ruleResult.details === 'object' && Array.isArray(ruleResult.details)) {
+                  const violationsTitle = document.createElement('div');
+                  violationsTitle.textContent = `Violations (${ruleResult.details.length}):`;
+                  violationsTitle.style.marginTop = '8px';
+                  violationsTitle.style.fontWeight = '500';
+                  ruleDetails.appendChild(violationsTitle);
+                  
+                  const violationsContainer = document.createElement('div');
+                  violationsContainer.className = 'qa-rule-violations';
+                  
+                  ruleResult.details.forEach(violation => {
+                    const violationEl = document.createElement('div');
+                    violationEl.className = 'qa-violation';
+                    
+                    // Format violation details based on what's available
+                    let violationText = '';
+                    
+                    if (violation.element) {
+                      violationText += `Element: ${violation.element}`;
+                    }
+                    
+                    if (violation.text) {
+                      violationText += violationText ? `, Text: "${violation.text}"` : `Text: "${violation.text}"`;
+                    }
+                    
+                    if (violation.issue) {
+                      violationText += violationText ? `, Issue: ${violation.issue}` : `Issue: ${violation.issue}`;
+                    }
+                    
+                    if (violation.actualRadius !== undefined) {
+                      violationText += violationText ? `, Found: ${violation.actualRadius}px` : `Found: ${violation.actualRadius}px`;
+                    }
+                    
+                    if (violation.actualTypeface) {
+                      violationText += violationText ? `, Using: ${violation.actualTypeface}` : `Using: ${violation.actualTypeface}`;
+                    }
+                    
+                    if (violation.contrastRatio) {
+                      violationText += violationText ? `, Contrast: ${violation.contrastRatio}` : `Contrast: ${violation.contrastRatio}`;
+                    }
+                    
+                    violationEl.textContent = violationText || JSON.stringify(violation);
+                    violationsContainer.appendChild(violationEl);
+                  });
+                  
+                  ruleDetails.appendChild(violationsContainer);
+                } else if (ruleResult.details && typeof ruleResult.details === 'string') {
+                  const detailsEl = document.createElement('div');
+                  detailsEl.textContent = ruleResult.details;
+                  ruleDetails.appendChild(detailsEl);
+                }
+              }
+              
+              ruleEl.appendChild(ruleDetails);
+            }
+            
+            ruleList.appendChild(ruleEl);
+          });
+          
+          frameEl.appendChild(ruleList);
+          container.appendChild(frameEl);
+        });
+        
+        // Function to toggle all details
+        function toggleAllDetails(show) {
+          const details = document.querySelectorAll('.qa-rule-details');
+          const chevrons = document.querySelectorAll('.qa-chevron');
+          
+          details.forEach(detail => {
+            if (show) {
+              detail.classList.add('visible');
+            } else {
+              detail.classList.remove('visible');
+            }
+          });
+          
+          chevrons.forEach(chevron => {
+            if (show) {
+              chevron.classList.add('expanded');
+              chevron.textContent = '▼';
+            } else {
+              chevron.classList.remove('expanded');
+              chevron.textContent = '▶';
+            }
+          });
+        }
+      }
+      
+      // Helper to get metadata for QA rules
+      function getQARuleMetadata(ruleId) {
+        const ruleMetadata = {
+          consistent_page_margins: {
+            description: "Space between elements and the left and right edges of the screen",
+            expected: "16px on mobile devices, 24px on tablet devices"
+          },
+          typographic_hierarchy: {
+            description: "Number of typographic styles per screen",
+            expected: "Less than 5 typographic styles per screen"
+          },
+          imagery_edge_to_edge: {
+            description: "Photography positioning",
+            expected: "Photography should extend to the top of the screen, overlapping the top status bar"
+          },
+          bottom_os_bar: {
+            description: "Bottom OS bar background color",
+            expected: "Should be transparent to its background (no white stripe) or match the background color"
+          },
+          vertical_spacing_cards: {
+            description: "Gap between cards",
+            expected: "Gap between cards is 12px"
+          },
+          vertical_spacing_header: {
+            description: "Gap between cards and section header",
+            expected: "Gap between cards and section header is 16px"
+          },
+          vertical_spacing_sections: {
+            description: "Gap between sections",
+            expected: "Gap between sections is 32px"
+          },
+          vertical_spacing_inputs: {
+            description: "Gap between grouped input fields",
+            expected: "Gap between grouped input fields is 24px"
+          },
+          color_contrast_text: {
+            description: "Contrast between text and its background",
+            expected: "Contrast ratio of at least 4.5:1"
+          },
+          color_contrast_ui: {
+            description: "Contrast between graphic element and its background",
+            expected: "Contrast ratio of at least 3:1"
+          },
+          ui_language: {
+            description: "Title case style",
+            expected: "All titles should be written in sentence case, unless they are a proper noun"
+          },
+          too_many_buttons: {
+            description: "Number of buttons per screen",
+            expected: "Less than 3 buttons per screen"
+          },
+          button_bar_shadow: {
+            description: "Button bar shadow style",
+            expected: "Button bar should not show a drop shadow unless the page is scrollable"
+          },
+          corner_radius: {
+            description: "Corner radius consistency",
+            expected: "All cards and images should have a 6px corner radius"
+          },
+          card_shadow: {
+            description: "Card shadow style",
+            expected: "All cards should have a drop shadow to indicate clickability"
+          },
+          typeface: {
+            description: "Font family usage",
+            expected: "All fonts should be using Brown typeface, not Brandon"
+          }
+        };
+        
+        return ruleMetadata[ruleId];
+      }
+
       // WebSocket connection state
       const state = {
         connected: false,
@@ -279,6 +751,11 @@
       const progressMessage = document.getElementById("progress-message");
       const progressStatus = document.getElementById("progress-status");
       const progressPercentage = document.getElementById("progress-percentage");
+      
+      // QA validation buttons
+      const validateQAButton = document.getElementById("btn-validate-qa");
+      const validateQASelectionButton = document.getElementById("btn-validate-qa-selection");
+      const qaResultsContainer = document.getElementById("qa-results-container");
 
       // Initialize UI
       function updateConnectionStatus(isConnected, message) {
@@ -295,6 +772,15 @@
         connectButton.disabled = isConnected;
         disconnectButton.disabled = !isConnected;
         portInput.disabled = isConnected;
+        
+        // Update QA validation buttons
+        updateButtonState(isConnected);
+      }
+      
+      // Update QA validation button states based on connection status
+      function updateButtonState(isConnected) {
+        validateQAButton.disabled = !isConnected;
+        validateQASelectionButton.disabled = !isConnected;
       }
 
       // Connect to WebSocket server
@@ -550,6 +1036,77 @@
         disconnectFromServer();
       });
 
+      // Run QA validation on all frames
+      validateQAButton.addEventListener("click", async () => {
+        if (!state.connected) {
+          return;
+        }
+        
+        try {
+          // Show progress indicator
+          progressContainer.classList.remove("hidden");
+          progressBar.style.width = "0%";
+          progressMessage.textContent = "Starting QA validation...";
+          progressStatus.textContent = "Started";
+          progressPercentage.textContent = "0%";
+          
+          // Run the validation command directly through the plugin
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "execute-command",
+                id: generateId(),
+                command: "validate_qa_rules",
+                params: { 
+                  ignoreStatusBar: true,
+                  outputFilePath: "qa_report.txt"
+                },
+              },
+            },
+            "*"
+          );
+        } catch (error) {
+          console.error("Error running QA validation:", error);
+          progressStatus.textContent = "Error";
+          progressStatus.className = "operation-error";
+          progressMessage.textContent = `Error: ${error.message || "Unknown error"}`;
+        }
+      });
+      
+      // Run QA validation on selected frames
+      validateQASelectionButton.addEventListener("click", async () => {
+        if (!state.connected) {
+          return;
+        }
+        
+        try {
+          // Show progress indicator
+          progressContainer.classList.remove("hidden");
+          progressBar.style.width = "0%";
+          progressMessage.textContent = "Starting QA validation on selection...";
+          progressStatus.textContent = "Started";
+          progressPercentage.textContent = "0%";
+          
+          // Run the validation command directly through the plugin
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "execute-command",
+                id: generateId(),
+                command: "test_qa_validation",
+                params: {},
+              },
+            },
+            "*"
+          );
+        } catch (error) {
+          console.error("Error running QA validation on selection:", error);
+          progressStatus.textContent = "Error";
+          progressStatus.className = "operation-error";
+          progressMessage.textContent = `Error: ${error.message || "Unknown error"}`;
+        }
+      });
+
       // Function to update progress UI
       function updateProgressUI(progressData) {
         // Show progress container if hidden
@@ -618,35 +1175,75 @@
       }
 
       // Listen for messages from the plugin code
-      window.onmessage = (event) => {
+      window.onmessage = async (event) => {
         const message = event.data.pluginMessage;
         if (!message) return;
 
-        console.log("Received message from plugin:", message);
+        console.log("Message from plugin:", message);
 
         switch (message.type) {
-          case "connection-status":
-            updateConnectionStatus(message.connected, message.message);
-            break;
           case "auto-connect":
-            connectButton.click();
+            const port = parseInt(portInput.value, 10) || 3055;
+            connectToServer(port);
             break;
-          case "auto-disconnect":
-            disconnectButton.click();
+          case "notify":
+            // Display notification
             break;
           case "command-result":
-            // Forward the result from plugin code back to WebSocket
-            sendSuccessResponse(message.id, message.result);
+            if (state.pendingRequests.has(message.id)) {
+              const { resolve } = state.pendingRequests.get(message.id);
+              state.pendingRequests.delete(message.id);
+              resolve(message.result);
+            }
+
+            // Send response back to MCP server
+            if (state.socket && state.connected) {
+              state.socket.send(
+                JSON.stringify({
+                  type: "response",
+                  id: message.id,
+                  result: message.result,
+                  channel: state.channel,
+                })
+              );
+            }
             break;
           case "command-error":
-            // Forward the error from plugin code back to WebSocket
-            sendErrorResponse(message.id, message.error);
+            if (state.pendingRequests.has(message.id)) {
+              const { reject } = state.pendingRequests.get(message.id);
+              state.pendingRequests.delete(message.id);
+              reject(new Error(message.error));
+            }
+
+            // Send error back to MCP server
+            if (state.socket && state.connected) {
+              state.socket.send(
+                JSON.stringify({
+                  type: "response",
+                  id: message.id,
+                  error: message.error,
+                  channel: state.channel,
+                })
+              );
+            }
             break;
           case "command_progress":
-            // Update UI with progress information
+            // Update progress UI
             updateProgressUI(message);
-            // Forward progress update to server
-            sendProgressUpdateToServer(message);
+            
+            // If this is a QA validation completion, update the results
+            if (message.commandType === "validate_qa_rules" && message.status === "completed") {
+              if (message.payload && message.payload.results) {
+                displayQAResults(message.payload.results);
+              }
+            }
+            
+            // Handle test_qa_validation command completion
+            if (message.commandType === "test_qa_validation" && message.status === "completed") {
+              if (message.payload && message.payload.results) {
+                displayQAResults(message.payload.results);
+              }
+            }
             break;
         }
       };
