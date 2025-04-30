@@ -258,6 +258,14 @@
         background-color: #471a1a;
         border-radius: 4px;
         margin-bottom: 6px;
+        transition: background-color 0.2s;
+      }
+      .qa-violation:hover {
+        background-color: #5a2222;
+      }
+      .qa-violation[style*="cursor: pointer"]:hover {
+        background-color: #6a2929;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
       }
       .qa-chevron {
         transition: transform 0.3s;
@@ -580,34 +588,35 @@
                     const violationEl = document.createElement('div');
                     violationEl.className = 'qa-violation';
                     
-                    // Format violation details based on what's available
-                    let violationText = '';
-                    
+                    // Make violation clickable to select the element in Figma
                     if (violation.element) {
-                      violationText += `Element: ${violation.element}`;
+                      violationEl.style.cursor = 'pointer';
+                      
+                      // If the violation is for a node that has an ID, extract it
+                      let nodeId = null;
+                      if (typeof violation.element === 'string') {
+                        // Try to extract ID from the violation data
+                        if (violation.nodeId) {
+                          nodeId = violation.nodeId;
+                        } else if (ruleId === 'corner_radius' && frame.nodeIds && frame.nodeIds[violation.element]) {
+                          // For corner radius violations, we might have a mapping of element names to node IDs
+                          nodeId = frame.nodeIds[violation.element];
+                        }
+                        
+                        // Add visual indicator that this is clickable
+                        violationEl.innerHTML = `🔍 <span style="text-decoration: underline;">${formatViolation(violation, ruleId)}</span>`;
+                        
+                        // Add click handler to highlight the element
+                        violationEl.onclick = function() {
+                          highlightElementInFigma(violation, frameId, nodeId, ruleId);
+                        };
+                      } else {
+                        violationEl.textContent = formatViolation(violation, ruleId);
+                      }
+                    } else {
+                      violationEl.textContent = formatViolation(violation, ruleId);
                     }
                     
-                    if (violation.text) {
-                      violationText += violationText ? `, Text: "${violation.text}"` : `Text: "${violation.text}"`;
-                    }
-                    
-                    if (violation.issue) {
-                      violationText += violationText ? `, Issue: ${violation.issue}` : `Issue: ${violation.issue}`;
-                    }
-                    
-                    if (violation.actualRadius !== undefined) {
-                      violationText += violationText ? `, Found: ${violation.actualRadius}px` : `Found: ${violation.actualRadius}px`;
-                    }
-                    
-                    if (violation.actualTypeface) {
-                      violationText += violationText ? `, Using: ${violation.actualTypeface}` : `Using: ${violation.actualTypeface}`;
-                    }
-                    
-                    if (violation.contrastRatio) {
-                      violationText += violationText ? `, Contrast: ${violation.contrastRatio}` : `Contrast: ${violation.contrastRatio}`;
-                    }
-                    
-                    violationEl.textContent = violationText || JSON.stringify(violation);
                     violationsContainer.appendChild(violationEl);
                   });
                   
@@ -651,6 +660,37 @@
               chevron.textContent = '▶';
             }
           });
+        }
+        
+        // Function to format a violation text based on its contents
+        function formatViolation(violation, ruleId) {
+          let violationText = '';
+          
+          if (violation.element) {
+            violationText += `Element: ${violation.element}`;
+          }
+          
+          if (violation.text) {
+            violationText += violationText ? `, Text: "${violation.text}"` : `Text: "${violation.text}"`;
+          }
+          
+          if (violation.issue) {
+            violationText += violationText ? `, Issue: ${violation.issue}` : `Issue: ${violation.issue}`;
+          }
+          
+          if (violation.actualRadius !== undefined) {
+            violationText += violationText ? `, Found: ${violation.actualRadius}px` : `Found: ${violation.actualRadius}px`;
+          }
+          
+          if (violation.actualTypeface) {
+            violationText += violationText ? `, Using: ${violation.actualTypeface}` : `Using: ${violation.actualTypeface}`;
+          }
+          
+          if (violation.contrastRatio) {
+            violationText += violationText ? `, Contrast: ${violation.contrastRatio}` : `Contrast: ${violation.contrastRatio}`;
+          }
+          
+          return violationText || JSON.stringify(violation);
         }
       }
       
@@ -1247,6 +1287,45 @@
             break;
         }
       };
+
+      // Add new function to highlight elements in Figma
+      function highlightElementInFigma(violation, frameId, nodeId, ruleId) {
+        console.log(`Highlighting element: ${violation.element}, frameId: ${frameId}, nodeId: ${nodeId}, rule: ${ruleId}`);
+        
+        // Create a search object to find the node
+        const searchData = {
+          frameId: frameId,
+          elementName: violation.element,
+          ruleId: ruleId
+        };
+        
+        // If we have a direct nodeId reference, use it
+        if (nodeId) {
+          searchData.nodeId = nodeId;
+        }
+        
+        // Add rule-specific data to help find the element
+        if (ruleId === 'corner_radius') {
+          searchData.expectedRadius = 6;
+          searchData.actualRadius = violation.actualRadius;
+        } else if (ruleId === 'color_contrast_text' || ruleId === 'color_contrast_ui') {
+          if (violation.textColor) searchData.textColor = violation.textColor;
+          if (violation.backgroundColor) searchData.backgroundColor = violation.backgroundColor;
+          if (violation.foregroundColor) searchData.foregroundColor = violation.foregroundColor;
+          if (violation.text) searchData.text = violation.text;
+        }
+        
+        // Send command to plugin code to find and select/highlight the element
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "highlight-qa-element",
+              searchData
+            }
+          },
+          "*"
+        );
+      }
     </script>
   </body>
 </html>

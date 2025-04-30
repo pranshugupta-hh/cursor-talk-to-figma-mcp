@@ -35,13 +35,21 @@ function getUrlVariable(param) {
   return vars;
 };
 
-function checkColors(foregroundColor, backgroundColor) {
+/**
+ * Check contrast ratio between two colors, accounting for alpha values
+ * @param {string} foregroundColor - Hex color of the foreground
+ * @param {string} backgroundColor - Hex color of the background
+ * @param {number} foregroundAlpha - Alpha value of foreground (0-1)
+ * @param {number} backgroundAlpha - Alpha value of background (0-1)
+ * @param {string} baseColor - Hex color of the canvas/page background (default white)
+ */
+function checkColors(foregroundColor, backgroundColor, foregroundAlpha = 1, backgroundAlpha = 1, baseColor = "#FFFFFF") {
   if (foregroundColor && backgroundColor) {
     foregroundHex = foregroundColor;
     backgroundHex = backgroundColor;
   }
 
-  // Hex to RGB
+  // Hex to RGB conversion
   function hexToRgb(hex) {
     var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
     hex = hex.replace(shorthandRegex, function(m, r, g, b) {
@@ -56,56 +64,61 @@ function checkColors(foregroundColor, backgroundColor) {
     } : null;
   }
 
-  // Get RGBA
-  var foregroundR = hexToRgb(foregroundHex).r
-  var foregroundG = hexToRgb(foregroundHex).g
-  var foregroundB = hexToRgb(foregroundHex).b
-  var foregroundColorRgba = ["" + foregroundR + "","" + foregroundG + "","" + foregroundB + "","0"]
+  // Alpha blending function: computes the resulting RGB values when a color with alpha is placed over another color
+  function blendWithAlpha(color, alpha, background) {
+    // For each component (r,g,b), blend using alpha
+    return {
+      r: Math.round(color.r * alpha + background.r * (1 - alpha)),
+      g: Math.round(color.g * alpha + background.g * (1 - alpha)),
+      b: Math.round(color.b * alpha + background.b * (1 - alpha))
+    };
+  }
 
-  var backgroundR = hexToRgb(backgroundHex).r
-  var backgroundG = hexToRgb(backgroundHex).g
-  var backgroundB = hexToRgb(backgroundHex).b
-  var backgroundColorRgba = ["" + backgroundR + "","" + backgroundG + "","" + backgroundB + "","1"]
+  // Get RGB values from hex
+  var foregroundRgb = hexToRgb(foregroundHex);
+  var backgroundRgb = hexToRgb(backgroundHex);
+  var baseRgb = hexToRgb(baseColor);
 
-  // console.log(foregroundColorRgba);
-  //
-  // console.log(backgroundR);
-  // console.log(backgroundG);
-  // console.log(backgroundB);
-  // console.log(backgroundColorRgba);
+  // Handle alpha blending
+  // First blend background with base color if it has opacity
+  var effectiveBackgroundRgb = backgroundAlpha < 1 
+    ? blendWithAlpha(backgroundRgb, backgroundAlpha, baseRgb) 
+    : backgroundRgb;
 
+  // Then blend foreground with effective background
+  var effectiveForegroundRgb = foregroundAlpha < 1 
+    ? blendWithAlpha(foregroundRgb, foregroundAlpha, effectiveBackgroundRgb) 
+    : foregroundRgb;
+
+  // Convert blended RGB values to arrays for luminance calculation
+  var foregroundColorRgba = [effectiveForegroundRgb.r, effectiveForegroundRgb.g, effectiveForegroundRgb.b, 1];
+  var backgroundColorRgba = [effectiveBackgroundRgb.r, effectiveBackgroundRgb.g, effectiveBackgroundRgb.b, 1];
+
+  // Calculate luminance (perceived brightness)
   function luma(rgbaColor) {
+    var rgb = [...rgbaColor]; // Clone the array
     for (var i = 0; i < 3; i++) {
-      var rgb = rgbaColor[i];
-      rgb /= 255;
-      rgb = rgb < .03928 ? rgb / 12.92 : Math.pow((rgb + .055) / 1.055, 2.4);
-      rgbaColor[i] = rgb;
+      rgb[i] = rgb[i] / 255;
+      rgb[i] = rgb[i] < .03928 ? rgb[i] / 12.92 : Math.pow((rgb[i] + .055) / 1.055, 2.4);
     }
-    return .2126 * rgbaColor[0] + .7152 * rgbaColor[1] + 0.0722 * rgbaColor[2];
+    return .2126 * rgb[0] + .7152 * rgb[1] + 0.0722 * rgb[2];
   }
 
   var foregroundLuma = luma(foregroundColorRgba);
   var backgroundLuma = luma(backgroundColorRgba);
 
-  // console.log(foregroundLuma);
-  // console.log(backgroundLuma);
-
+  // Calculate contrast ratio per WCAG 2.0 formula
   function checkContrast() {
-    foregroundLuma = foregroundLuma + 0.05
-    backgroundLuma = backgroundLuma + 0.05
-
-    if (backgroundLuma < foregroundLuma) {
-      return foregroundLuma / backgroundLuma;
-    } else {
-      return backgroundLuma / foregroundLuma;
-    }
+    var l1 = Math.max(foregroundLuma, backgroundLuma) + 0.05;
+    var l2 = Math.min(foregroundLuma, backgroundLuma) + 0.05;
+    return l1 / l2;
   }
 
   var ratio = checkContrast();
   var ratioRounded = ratio.toPrecision(3);
 
   function checkRating(value) {
-    if (ratioRounded > value) {
+    if (ratioRounded >= value) {
       return true;
     } else {
       return false;
@@ -118,31 +131,43 @@ function checkColors(foregroundColor, backgroundColor) {
   var aaaText = checkRating(7);
   var aaComponent = checkRating(3);
 
-  // console.log("Foreground: " + foregroundHex)
-  // console.log("Background: " + backgroundHex)
-  // console.log("Contrast: " + ratio);
-  // console.log("Rounded Contrast: " + ratioRounded);
-  // console.log("AA Headline: " + aaHeadline);
-  // console.log("AAA Headline: " + aaaHeadline);
-  // console.log("AA Text: " + aaText);
-  // console.log("AAA Text: " + aaaText);
-  // console.log("AA Component: " + aaComponent);
-  // console.log("Foreground Luma: " + foregroundLuma);
-  // console.log("Background Luma: " + backgroundLuma);
-
+  // Return color data with effective RGB values after alpha blending
   colorData = {
-    "foregroundHex":foregroundHex,
-    "backgroundHex":backgroundHex,
-    "foregroundRgb":foregroundR + ", " + foregroundG + ", " + foregroundB,
-    "backgroundRgb":backgroundR + ", " + backgroundG + ", " + backgroundB,
-    "contrast":ratioRounded,
-    "aaHeadline":aaHeadline,
-    "aaaHeadline":aaaHeadline,
-    "aaText":aaText,
-    "aaaText":aaaText,
-    "aaComponent":aaComponent,
-    "foregroundLuma":foregroundLuma,
-    "backgroundLuma":backgroundLuma
-  }
+    "foregroundHex": foregroundHex,
+    "backgroundHex": backgroundHex,
+    "foregroundAlpha": foregroundAlpha,
+    "backgroundAlpha": backgroundAlpha,
+    "effectiveForegroundRgb": effectiveForegroundRgb.r + ", " + effectiveForegroundRgb.g + ", " + effectiveForegroundRgb.b,
+    "effectiveBackgroundRgb": effectiveBackgroundRgb.r + ", " + effectiveBackgroundRgb.g + ", " + effectiveBackgroundRgb.b,
+    "foregroundRgb": foregroundRgb.r + ", " + foregroundRgb.g + ", " + foregroundRgb.b,
+    "backgroundRgb": backgroundRgb.r + ", " + backgroundRgb.g + ", " + backgroundRgb.b,
+    "contrast": ratioRounded,
+    "aaHeadline": aaHeadline,
+    "aaaHeadline": aaaHeadline,
+    "aaText": aaText,
+    "aaaText": aaaText,
+    "aaComponent": aaComponent,
+    "foregroundLuma": foregroundLuma,
+    "backgroundLuma": backgroundLuma
+  };
+  
+  return colorData;
 };
+
+// Function to calculate contrast ratio directly from RGBA values
+function getContrastRatio(fgR, fgG, fgB, fgA, bgR, bgG, bgB, bgA, baseColor = "#FFFFFF") {
+  // Convert RGB to hex for the foreground and background
+  const fgHex = rgbToHex(fgR, fgG, fgB);
+  const bgHex = rgbToHex(bgR, bgG, bgB);
+  
+  // Calculate contrast using our main function
+  return checkColors(fgHex, bgHex, fgA, bgA, baseColor);
+}
+
+// Helper function to convert RGB to hex
+function rgbToHex(r, g, b) {
+  return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+// console.log(colorData);
  

@@ -82,6 +82,9 @@ figma.ui.onmessage = async (msg) => {
         });
       }
       break;
+    case "highlight-qa-element":
+      highlightQAElement(msg.searchData);
+      break;
   }
 };
 
@@ -3004,8 +3007,8 @@ async function validateQARules(params) {
         throw new Error("No frames found in selection. Please select at least one frame to validate.");
       }
     } else if (frameIds.length > 0) {
-      // Get specific frames by IDs
-      frames = frameIds.map(id => figma.getNodeById(id));
+      // Get specific frames by IDs - use async version
+      frames = await Promise.all(frameIds.map(id => figma.getNodeByIdAsync(id)));
       frames = frames.filter(node => node && node.type === "FRAME");
     } else {
       // Get all top-level frames in the current page
@@ -3601,6 +3604,7 @@ async function validateColorContrastText(frame) {
       if (ratio < 4.5) {
         violations.push({
           element: textNode.name || 'Text element',
+          nodeId: textNode.id, // Store node ID for direct selection
           text: textNode.characters.substring(0, 20) + (textNode.characters.length > 20 ? '...' : ''),
           contrastRatio: ratio.toFixed(2),
           textColor: rgbToHex(textColor),
@@ -3708,6 +3712,7 @@ async function validateColorContrastUI(frame) {
       if (ratio < 3) {
         violations.push({
           element: uiNode.name || 'UI element',
+          nodeId: uiNode.id, // Store node ID for direct selection
           contrastRatio: ratio.toFixed(2),
           foregroundColor: rgbToHex(foregroundColor),
           backgroundColor: rgbToHex(backgroundColor),
@@ -3763,23 +3768,62 @@ async function validateCornerRadius(frame) {
   const violations = [];
   const EXPECTED_RADIUS = 6;
   
+  // To store mapping between element names and node IDs
+  const nodeIds = {};
+  
   // Collect nodes that should have corner radius
   function collectNodes(node) {
-    // Check if node is a card or image
-    const isCard = node.name.toLowerCase().includes('card');
-    const isImage = node.name.toLowerCase().includes('image') || 
-                   node.name.toLowerCase().includes('photo') ||
-                   node.type === 'IMAGE';
+    // Skip invisible nodes or components
+    if (!node.visible || node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') {
+      return;
+    }
     
-    // Also include rectangles that might be cards or images
-    const isRectWithFill = node.type === 'RECTANGLE' && node.fills && 
-                          node.fills.some(fill => fill.visible !== false);
+    // Skip nodes likely to be part of the UI framework (action bars, navigation)
+    if (node.name.toLowerCase().includes('action') || 
+        node.name.toLowerCase().includes('navigation') ||
+        node.name.toLowerCase().includes('button') ||
+        node.name.toLowerCase().includes('icon') ||
+        node.name.toLowerCase().includes('tab')) {
+      return;
+    }
     
-    if (isCard || isImage || isRectWithFill) {
-      targetNodes.push({
-        node,
-        type: isCard ? 'card' : (isImage ? 'image' : 'rectangle')
-      });
+    // Only check cards and images based on name or type
+    const isCard = node.name.toLowerCase().includes('card') || 
+                   node.name.toLowerCase().includes('tile') ||
+                   (node.parent && node.parent.name.toLowerCase().includes('card'));
+                   
+    const isImage = node.type === 'IMAGE' || 
+                    node.name.toLowerCase().includes('image') || 
+                    node.name.toLowerCase().includes('photo') || 
+                    node.name.toLowerCase().includes('picture') ||
+                    (node.fills && node.fills.some(fill => fill.type === 'IMAGE' && fill.visible !== false));
+    
+    // Some rectangles are used as cards or image containers
+    const isPotentialCardOrImage = 
+      node.type === 'RECTANGLE' && 
+      node.fills && 
+      node.fills.some(fill => fill.visible !== false) &&
+      !node.name.toLowerCase().includes('background') &&
+      !node.name.toLowerCase().includes('container') &&
+      !node.name.toLowerCase().includes('wrapper') &&
+      !node.name.toLowerCase().includes('box');
+    
+    if (isCard || isImage || (isPotentialCardOrImage && node.parent && node.parent.type === 'FRAME')) {
+      // Only add if the node actually has corner radius properties
+      if (node.cornerRadius !== undefined || 
+          (node.topLeftRadius !== undefined && 
+           node.topRightRadius !== undefined && 
+           node.bottomRightRadius !== undefined && 
+           node.bottomLeftRadius !== undefined)) {
+        
+        // Store node ID mapped to its name for later lookup
+        nodeIds[node.name] = node.id;
+        
+        targetNodes.push({
+          node,
+          type: isCard ? 'card' : (isImage ? 'image' : 'rectangle')
+        });
+      }
     }
     
     // Check children
@@ -3796,11 +3840,6 @@ async function validateCornerRadius(frame) {
   for (const item of targetNodes) {
     const node = item.node;
     const nodeType = item.type;
-    
-    // Skip if it's not a shape with corner radius property
-    if (!node.cornerRadius && typeof node.cornerRadius !== 'number') {
-      continue;
-    }
     
     let cornerRadiusValue;
     let individualCorners = false;
@@ -3819,9 +3858,12 @@ async function validateCornerRadius(frame) {
       if (allSame) {
         cornerRadiusValue = node.topLeftRadius;
       } else {
-        // If corners have different radii, that's a violation
+        // If corners have different radii, that's a violation but we'll use the top-left for reporting
+        cornerRadiusValue = node.topLeftRadius;
+        
         violations.push({
           element: node.name || `${nodeType} element`,
+          nodeId: node.id, // Store the actual node ID
           issue: 'Inconsistent corner radii',
           cornerRadii: {
             topLeft: node.topLeftRadius,
@@ -3833,12 +3875,16 @@ async function validateCornerRadius(frame) {
         });
         continue;
       }
+    } else {
+      // If no corner radius property was found, skip this node
+      continue;
     }
     
     // Check if radius matches expected value
     if (cornerRadiusValue !== EXPECTED_RADIUS) {
       violations.push({
         element: node.name || `${nodeType} element`,
+        nodeId: node.id, // Store the actual node ID
         actualRadius: cornerRadiusValue,
         expected: EXPECTED_RADIUS
       });
@@ -3854,7 +3900,8 @@ async function validateCornerRadius(frame) {
     return {
       passed: false,
       reason: `Found ${violations.length} elements with incorrect corner radius`,
-      details: violations
+      details: violations,
+      nodeIds: nodeIds // Include the mapping for better element finding
     };
   }
 }
@@ -4100,5 +4147,332 @@ async function testQAValidation() {
     ignoreStatusBar: true,
     useSelection: true
   });
+}
+
+// Function to find and highlight elements from QA validation results
+async function highlightQAElement(searchData) {
+  console.log("Searching for element:", searchData);
+  
+  try {
+    let targetNode = null;
+    
+    // If we have a direct nodeId, use it first
+    if (searchData.nodeId) {
+      targetNode = await figma.getNodeByIdAsync(searchData.nodeId);
+      if (targetNode) {
+        console.log("Found node by ID:", targetNode.name);
+      }
+    }
+    
+    // If node not found by ID, try to search by name and properties
+    if (!targetNode) {
+      // Get the frame first
+      const frame = searchData.frameId ? await figma.getNodeByIdAsync(searchData.frameId) : null;
+      
+      if (!frame) {
+        throw new Error(`Frame not found with ID: ${searchData.frameId}`);
+      }
+      
+      console.log(`Searching in frame "${frame.name}" for element "${searchData.elementName}"`);
+      
+      // Search within the frame based on rule-specific criteria
+      if (searchData.ruleId === "corner_radius") {
+        targetNode = await findNodeByCornerRadius(frame, searchData);
+      } else if (searchData.ruleId === "color_contrast_text") {
+        targetNode = await findNodeByTextContrast(frame, searchData);
+      } else if (searchData.ruleId === "color_contrast_ui") {
+        targetNode = await findNodeByUIContrast(frame, searchData);
+      } else {
+        // Generic search by name
+        targetNode = await findNodeByName(frame, searchData.elementName);
+      }
+    }
+    
+    if (!targetNode) {
+      throw new Error(`Element "${searchData.elementName}" not found in frame`);
+    }
+    
+    // Select the node
+    figma.currentPage.selection = [targetNode];
+    
+    // Scroll viewport to the node
+    figma.viewport.scrollAndZoomIntoView([targetNode]);
+    
+    // First save all original properties we might modify
+    let originalState = {
+      fills: 'fills' in targetNode ? JSON.parse(JSON.stringify(targetNode.fills)) : null,
+      strokes: 'strokes' in targetNode ? JSON.parse(JSON.stringify(targetNode.strokes)) : null,
+      strokeWeight: 'strokeWeight' in targetNode ? targetNode.strokeWeight : null,
+      effects: 'effects' in targetNode ? JSON.parse(JSON.stringify(targetNode.effects)) : null
+    };
+    
+    // Store node ID and type for restoration
+    const nodeId = targetNode.id;
+    const nodeType = targetNode.type;
+    
+    try {
+      // Apply highlight fill
+      if ('fills' in targetNode) {
+        targetNode.fills = [{
+          type: 'SOLID',
+          color: { r: 1, g: 0.5, b: 0 },
+          opacity: 0.5
+        }];
+      }
+      
+      // Apply highlight stroke if applicable
+      if ('strokes' in targetNode) {
+        targetNode.strokes = [{
+          type: 'SOLID',
+          color: { r: 1, g: 0.3, b: 0 },
+          opacity: 1
+        }];
+        
+        if ('strokeWeight' in targetNode) {
+          targetNode.strokeWeight = 2;
+        }
+      }
+      
+      // Flash notification
+      figma.notify(`Found element: ${targetNode.name}`, { timeout: 2000 });
+      
+      // Use standard setTimeout to restore original appearance
+      setTimeout(async () => {
+        try {
+          // Try to get the node again since it might have changed
+          const nodeToRestore = await figma.getNodeByIdAsync(nodeId);
+          
+          if (!nodeToRestore) {
+            console.log("Node no longer exists, cannot restore appearance");
+            return;
+          }
+          
+          // Restore original appearance
+          if ('fills' in nodeToRestore && originalState.fills !== null) {
+            nodeToRestore.fills = originalState.fills;
+          }
+          
+          if ('strokes' in nodeToRestore && originalState.strokes !== null) {
+            nodeToRestore.strokes = originalState.strokes;
+          }
+          
+          if ('strokeWeight' in nodeToRestore && originalState.strokeWeight !== null) {
+            nodeToRestore.strokeWeight = originalState.strokeWeight;
+          }
+          
+          if ('effects' in nodeToRestore && originalState.effects !== null) {
+            nodeToRestore.effects = originalState.effects;
+          }
+          
+          console.log("Original appearance restored");
+        } catch (error) {
+          console.error("Error in restoration:", error);
+          // Don't show an error notification to avoid disrupting the user
+        }
+      }, 1500);
+      
+    } catch (highlightError) {
+      console.error("Error applying highlight:", highlightError);
+      figma.notify("Error highlighting element: " + highlightError.message, { error: true });
+      
+      // Attempt to immediately restore in case of error
+      try {
+        if ('fills' in targetNode && originalState.fills !== null) {
+          targetNode.fills = originalState.fills;
+        }
+        if ('strokes' in targetNode && originalState.strokes !== null) {
+          targetNode.strokes = originalState.strokes;
+        }
+      } catch (restoreError) {
+        console.error("Error restoring after highlight error:", restoreError);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("Error highlighting QA element:", error);
+    figma.notify(`Error finding element: ${error.message}`, { error: true });
+    return false;
+  }
+}
+
+// Helper function to find a node by name
+async function findNodeByName(parent, name) {
+  if (!parent || !name) return null;
+  
+  // Check if the current node matches
+  if (parent.name && parent.name.toLowerCase() === name.toLowerCase()) {
+    return parent;
+  }
+  
+  // Recursively check all children
+  if ('children' in parent) {
+    for (const child of parent.children) {
+      const found = await findNodeByName(child, name);
+      if (found) return found;
+    }
+  }
+  
+  return null;
+}
+
+// Find a node by corner radius
+async function findNodeByCornerRadius(parent, searchData) {
+  const exactRadius = searchData.actualRadius;
+  const elementName = searchData.elementName;
+  const results = [];
+  
+  function searchNode(node) {
+    // Skip invisible nodes
+    if (!node.visible) return;
+    
+    // Check if node has the same name
+    const nameMatches = elementName && node.name === elementName;
+    
+    // Check if node has the same corner radius
+    const radiusMatches = 
+      'cornerRadius' in node && 
+      typeof node.cornerRadius === 'number' && 
+      Math.abs(node.cornerRadius - exactRadius) < 0.1;
+    
+    // For nodes with individual corner radii
+    const individualRadiusMatches = 
+      'topLeftRadius' in node && 
+      node.topLeftRadius !== undefined && 
+      Math.abs(node.topLeftRadius - exactRadius) < 0.1;
+    
+    // If both name and radius match, this is likely our target
+    if (nameMatches && (radiusMatches || individualRadiusMatches)) {
+      results.push({
+        node,
+        exactMatch: true,
+        score: 100
+      });
+    } 
+    // If only one property matches, it's a partial match
+    else if (nameMatches || radiusMatches || individualRadiusMatches) {
+      let score = 0;
+      if (nameMatches) score += 50;
+      if (radiusMatches || individualRadiusMatches) score += 40;
+      
+      results.push({
+        node,
+        exactMatch: false,
+        score
+      });
+    }
+    
+    // Recursively check children
+    if ('children' in node) {
+      for (const child of node.children) {
+        searchNode(child);
+      }
+    }
+  }
+  
+  searchNode(parent);
+  
+  // Sort results by score, highest first
+  results.sort((a, b) => b.score - a.score);
+  
+  // Return the best match, if any
+  return results.length > 0 ? results[0].node : null;
+}
+
+// Find a text node by contrast issue
+async function findNodeByTextContrast(parent, searchData) {
+  const elementName = searchData.elementName;
+  const textContent = searchData.text;
+  const results = [];
+  
+  function searchNode(node) {
+    // Skip invisible nodes
+    if (!node.visible) return;
+    
+    // Check if node is a text node
+    if (node.type === 'TEXT') {
+      // Check name match
+      const nameMatches = elementName && node.name === elementName;
+      
+      // Check text content match
+      const textMatches = textContent && 
+        node.characters && 
+        node.characters.includes(textContent);
+      
+      if (nameMatches || textMatches) {
+        let score = 0;
+        if (nameMatches) score += 50;
+        if (textMatches) score += 50;
+        
+        results.push({
+          node,
+          exactMatch: nameMatches && textMatches,
+          score
+        });
+      }
+    }
+    
+    // Recursively check children
+    if ('children' in node) {
+      for (const child of node.children) {
+        searchNode(child);
+      }
+    }
+  }
+  
+  searchNode(parent);
+  
+  // Sort results by score, highest first
+  results.sort((a, b) => b.score - a.score);
+  
+  // Return the best match, if any
+  return results.length > 0 ? results[0].node : null;
+}
+
+// Find a UI element by contrast issue
+async function findNodeByUIContrast(parent, searchData) {
+  const elementName = searchData.elementName;
+  const results = [];
+  
+  function searchNode(node) {
+    // Skip invisible nodes
+    if (!node.visible) return;
+    
+    // Check if node is a UI element based on name
+    const isUIElement = node.name.toLowerCase().includes('button') || 
+                        node.name.toLowerCase().includes('icon') ||
+                        node.name.toLowerCase().includes('control') ||
+                        node.name.toLowerCase().includes('input');
+    
+    // Check name match
+    const nameMatches = elementName && node.name === elementName;
+    
+    if (nameMatches || (isUIElement && elementName && node.name.includes(elementName))) {
+      let score = 0;
+      if (nameMatches) score += 70;
+      if (isUIElement) score += 30;
+      
+      results.push({
+        node,
+        exactMatch: nameMatches,
+        score
+      });
+    }
+    
+    // Recursively check children
+    if ('children' in node) {
+      for (const child of node.children) {
+        searchNode(child);
+      }
+    }
+  }
+  
+  searchNode(parent);
+  
+  // Sort results by score, highest first
+  results.sort((a, b) => b.score - a.score);
+  
+  // Return the best match, if any
+  return results.length > 0 ? results[0].node : null;
 }
 
